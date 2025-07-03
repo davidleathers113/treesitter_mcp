@@ -1,7 +1,7 @@
 {
     "name": "treesitter_mcp",
-    "version": "1.0.0",
-    "description": "A Model Context Protocol server for Tree-sitter code analysis",
+    "version": "2.0.0",
+    "description": "High-performance Model Context Protocol server for Tree-sitter code analysis with worker pool architecture and comprehensive language support",
     "main": "build/index.js",
     "bin": {
         "tree-sitter-mcp-server": "build/index.js"
@@ -21,10 +21,27 @@
         "mcp",
         "tree-sitter",
         "code-analysis",
-        "ast"
+        "ast",
+        "parser",
+        "syntax-tree",
+        "worker-threads",
+        "performance",
+        "javascript",
+        "python",
+        "typescript",
+        "language-server",
+        "parsing"
     ],
     "author": "David Leathers",
     "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/davidleathers113/treesitter_mcp.git"
+    },
+    "homepage": "https://github.com/davidleathers113/treesitter_mcp#readme",
+    "bugs": {
+        "url": "https://github.com/davidleathers113/treesitter_mcp/issues"
+    },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.13.2",
         "@types/uuid": "^10.0.0",
