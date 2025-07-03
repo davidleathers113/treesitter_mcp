@@ -1,0 +1,29 @@
+{
+    "mcpServers": {
+        "treesitter": {
+            "command": "node",
+            "args": [
+                "/Users/davidleathers/projects/treesitter_mcp/build/index.js"
+            ],
+            "env": {}
+        },
+        "browsermcp": {
+            "command": "npx",
+            "args": [
+                "@browsermcp/mcp@latest"
+            ]
+        },
+        "Bright Data": {
+            "command": "/Users/davidleathers/.nvm/versions/node/v22.14.0/bin/node",
+            "args": [
+                "/Users/davidleathers/.nvm/versions/node/v22.14.0/bin/npx",
+                "@brightdata/mcp"
+            ],
+            "env": {
+                "API_TOKEN": "a1c52bce-9154-439a-b33a-c7dddf98bf9e",
+                "WEB_UNLOCKER_ZONE": "mcp_unlocker1",
+                "BROWSER_AUTH": "brd-customer-hl_9610ba6a-zone-scraping_browser1:q99o75w2xffs"
+            }
+        }
+    }
+}

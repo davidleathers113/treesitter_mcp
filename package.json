@@ -6,6 +6,10 @@
     "bin": {
         "tree-sitter-mcp-server": "build/index.js"
     },
+    "files": [
+        "build/**/*",
+        "node_modules/tree-sitter-wasms/out/*.wasm"
+    ],
     "scripts": {
         "build": "tsc",
         "start": "node build/index.js",
@@ -19,11 +23,17 @@
         "code-analysis",
         "ast"
     ],
-    "author": "",
+    "author": "David Leathers",
     "license": "MIT",
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.13.2",
-        "web-tree-sitter": "^0.25.6"
+        "@types/uuid": "^10.0.0",
+        "fast-json-stringify": "^6.0.1",
+        "lru-cache": "^11.1.0",
+        "tree-sitter-wasms": "^0.1.12",
+        "uuid": "^11.1.0",
+        "web-tree-sitter": "^0.25.6",
+        "zod": "^3.25.71"
     },
     "devDependencies": {
         "@types/node": "^22.10.2",

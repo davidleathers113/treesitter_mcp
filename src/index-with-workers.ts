@@ -7,9 +7,7 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { TreeSitterService } from './tree-sitter-service';
 import { WorkerPool } from './workers/worker-pool';
-import { loadConfig } from './config';
 import { 
   stringifyParseResult,
   stringifyQueryResult,
@@ -20,8 +18,6 @@ import {
   stringifyGenericResult
 } from './schemas/response-schemas';
 
-const config = loadConfig();
-
 const server = new Server({
   name: 'tree-sitter-mcp-server',
   version: '1.0.0',
@@ -31,22 +27,13 @@ const server = new Server({
   }
 });
 
-// Initialize either direct service or worker pool based on configuration
-let treeSitterService: TreeSitterService | null = null;
-let workerPool: WorkerPool | null = null;
-
-if (config.useWorkers) {
-  workerPool = new WorkerPool({
-    poolSize: config.workerPoolSize,
-    workerTimeout: config.workerTimeout,
-    maxRequestsPerWorker: config.maxRequestsPerWorker,
-    restartOnError: config.restartWorkersOnError
-  });
-  console.error(`Using worker pool mode with ${config.workerPoolSize} workers`);
-} else {
-  treeSitterService = new TreeSitterService();
-  console.error('Using direct mode (single-threaded)');
-}
+// Initialize worker pool with configuration
+const workerPool = new WorkerPool({
+  poolSize: Math.min(4, require('os').cpus().length - 1),
+  workerTimeout: 30000, // 30 seconds
+  maxRequestsPerWorker: 1000,
+  restartOnError: true
+});
 
 // Input validation to prevent prototype pollution
 function sanitizeArgs(args: any): any {
@@ -70,25 +57,19 @@ function sanitizeArgs(args: any): any {
   }
 }
 
-// Initialize service with atomic promise cache
+// Initialize worker pool with atomic promise cache
 let initPromise: Promise<void> | null = null;
-let serviceInitialized = false;
+let poolInitialized = false;
 
-async function ensureServiceInitialized() {
-  if (serviceInitialized) return;
+async function ensurePoolInitialized() {
+  if (poolInitialized) return;
   
   if (!initPromise) {
-    if (config.useWorkers && workerPool) {
-      initPromise = workerPool.initialize();
-    } else if (treeSitterService) {
-      initPromise = treeSitterService.initialize();
-    } else {
-      throw new Error('No service configured');
-    }
+    initPromise = workerPool.initialize();
   }
   
   await initPromise;
-  serviceInitialized = true;
+  poolInitialized = true;
 }
 
 // List available tools
@@ -224,7 +205,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_worker_stats',
-        description: 'Get statistics about the worker pool (only available in worker mode)',
+        description: 'Get statistics about the worker pool',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -268,25 +249,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
-    await ensureServiceInitialized();
+    await ensurePoolInitialized();
 
     switch (name) {
       case 'parse_code': {
         const { code, language, wasmPath } = args as { code: string; language: string; wasmPath?: string };
 
         const startTime = Date.now();
-        let result;
-        
-        if (config.useWorkers && workerPool) {
-          result = await workerPool.parseCode(code, language, wasmPath);
-        } else if (treeSitterService) {
-          // Load language if not already loaded
-          await treeSitterService!.loadLanguage(language, wasmPath);
-          result = treeSitterService!.parseCode(code, language);
-        } else {
-          throw new Error('No service configured');
-        }
-        
+        const result = await workerPool.parseCode(code, language, wasmPath);
         const parseTime = Date.now() - startTime;
 
         // Get language-specific query suggestions
@@ -325,7 +295,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 has_syntax_errors: result.hasError,
                 parse_time_ms: parseTime,
                 performance: parseTime < 50 ? 'fast' : parseTime < 200 ? 'moderate' : 'slow',
-                execution_mode: config.useWorkers ? 'worker_pool' : 'direct'
+                processed_by_worker: true
               },
               next_actions: [
                 'Use query_code to search for specific patterns in this AST',
@@ -352,18 +322,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         const startTime = Date.now();
-        let result;
-        
-        if (config.useWorkers && workerPool) {
-          result = await workerPool.queryCode(code, language, query, wasmPath);
-        } else if (treeSitterService) {
-          // Load language if not already loaded
-          await treeSitterService!.loadLanguage(language, wasmPath);
-          result = treeSitterService!.queryCode(code, language, query);
-        } else {
-          throw new Error('No service configured');
-        }
-        
+        const result = await workerPool.queryCode(code, language, query, wasmPath);
         const queryTime = Date.now() - startTime;
         return {
           content: [{
@@ -378,7 +337,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 found_captures: result.matches.flatMap(m => m.captures.map(c => c.name)).filter((v, i, a) => a.indexOf(v) === i),
                 query_time_ms: queryTime,
                 performance: queryTime < 10 ? 'fast' : queryTime < 50 ? 'moderate' : 'slow',
-                execution_mode: config.useWorkers ? 'worker_pool' : 'direct'
+                processed_by_worker: true
               },
               next_actions: result.matches.length > 0 ? [
                 'Examine the captured nodes for detailed information',
@@ -446,17 +405,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
 
-        let result;
-        
-        if (config.useWorkers && workerPool) {
-          result = await workerPool.getNodeAtPosition(code, language, row, column, wasmPath);
-        } else if (treeSitterService) {
-          // Load language if not already loaded
-          await treeSitterService.loadLanguage(language, wasmPath);
-          result = treeSitterService.getNodeAtPosition(code, language, row, column);
-        } else {
-          throw new Error('No service configured');
-        }
+        const result = await workerPool.getNodeAtPosition(code, language, row, column, wasmPath);
         return {
           content: [{
             type: 'text',
@@ -475,7 +424,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   max_row: lines.length - 1,
                   max_column_for_row: lines[row]?.length || 0
                 },
-                execution_mode: config.useWorkers ? 'worker_pool' : 'direct'
+                processed_by_worker: true
               },
               next_actions: result ? [
                 'Examine the node\'s children array for nested elements',
@@ -505,17 +454,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           wasmPath?: string;
         };
 
-        let result;
-        
-        if (config.useWorkers && workerPool) {
-          result = await workerPool.getSyntaxTree(code, language, wasmPath);
-        } else if (treeSitterService) {
-          // Load language if not already loaded
-          await treeSitterService!.loadLanguage(language, wasmPath);
-          result = treeSitterService!.getSyntaxTree(code, language);
-        } else {
-          throw new Error('No service configured');
-        }
+        const result = await workerPool.getSyntaxTree(code, language, wasmPath);
         const lineCount = result.split('\n').length;
         return {
           content: [{
@@ -529,7 +468,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 line_count: lineCount,
                 contains_structure: result.includes('(') && result.includes(')'),
                 language_parsed: language,
-                execution_mode: config.useWorkers ? 'worker_pool' : 'direct'
+                processed_by_worker: true
               },
               next_actions: [
                 'Use this tree to understand the code\'s AST structure',
@@ -551,17 +490,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'load_language': {
         const { language, wasmPath } = args as { language: string; wasmPath?: string };
 
-        let loadedLanguages;
-        
-        if (config.useWorkers && workerPool) {
-          await workerPool.loadLanguage(language, wasmPath);
-          loadedLanguages = await workerPool.getAvailableLanguages();
-        } else if (treeSitterService) {
-          await treeSitterService!.loadLanguage(language, wasmPath);
-          loadedLanguages = treeSitterService!.getAvailableLanguages();
-        } else {
-          throw new Error('No service configured');
-        }
+        await workerPool.loadLanguage(language, wasmPath);
+        const loadedLanguages = await workerPool.getAvailableLanguages();
         return {
           content: [{
             type: 'text',
@@ -574,12 +504,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 source: wasmPath || 'default',
                 total_loaded_languages: loadedLanguages.length,
                 is_newly_loaded: true,
-                execution_mode: config.useWorkers ? 'worker_pool' : 'direct'
+                loaded_in_workers: true
               },
               next_actions: [
                 `Use parse_code to analyze ${language} source code`,
                 `Use query_code to search for patterns in ${language} files`,
-                'The language parser is now cached for fast subsequent operations'
+                'The language parser is now cached in all worker threads for fast operations'
               ],
               context: {
                 operation: 'load_language',
@@ -592,15 +522,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'list_languages': {
-        let languages;
-        
-        if (config.useWorkers && workerPool) {
-          languages = await workerPool.getAvailableLanguages();
-        } else if (treeSitterService) {
-          languages = treeSitterService!.getAvailableLanguages();
-        } else {
-          throw new Error('No service configured');
-        }
+        const languages = await workerPool.getAvailableLanguages();
         return {
           content: [{
             type: 'text',
@@ -615,11 +537,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 has_languages: languages.length > 0,
                 ready_for_parsing: languages.length > 0,
                 server_state: languages.length > 0 ? 'ready' : 'needs_languages',
-                execution_mode: config.useWorkers ? 'worker_pool' : 'direct'
+                using_workers: true
               },
               next_actions: languages.length > 0 ? [
                 'Use parse_code with any of these languages',
-                'Languages are cached and ready for immediate use',
+                'Languages are cached across all worker threads',
                 'No need to reload - parsers persist between operations'
               ] : [
                 'Use load_language to add parser support for your target language',
@@ -629,7 +551,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               context: {
                 operation: 'list_languages',
                 server_initialization_complete: true,
-                parser_cache_size: languages.length
+                parser_cache_distributed: true
               }
             })
           }]
@@ -637,28 +559,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_worker_stats': {
-        if (!config.useWorkers || !workerPool) {
-          return {
-            content: [{
-              type: 'text',
-              text: stringifyErrorResult({
-                success: false,
-                error: 'Worker statistics not available in direct mode',
-                details: 'This tool is only available when using worker pool mode.',
-                suggestions: [
-                  'Set TREESITTER_USE_WORKERS=true to enable worker mode',
-                  'Restart the server to apply configuration changes'
-                ],
-                context: {
-                  execution_mode: 'direct',
-                  workers_enabled: false
-                }
-              })
-            }],
-            isError: true
-          };
-        }
-
         const stats = workerPool.getPoolStats();
         return {
           content: [{
@@ -735,11 +635,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const isLanguageError = errorMessage.includes('Could not load language');
     const isWasmError = errorMessage.includes('Failed to download') || errorMessage.includes('ENOENT');
     const isQueryError = errorMessage.includes('Query syntax error');
+    const isWorkerError = errorMessage.includes('Worker') || errorMessage.includes('timed out');
 
     let suggestions = ['Check the error details above for specific guidance'];
     let details = 'An unexpected error occurred during operation.';
 
-    if (isLanguageError) {
+    if (isWorkerError) {
+      details = 'A worker thread encountered an error.';
+      suggestions = [
+        'The operation will be automatically retried',
+        'Worker threads restart on errors',
+        'Check get_worker_stats for pool health'
+      ];
+    } else if (isLanguageError) {
       details = 'The requested language grammar is not available.';
       suggestions = [
         'Provide a wasmPath parameter with a valid .wasm grammar file',
@@ -772,7 +680,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           suggestions: suggestions,
           context: {
             tool: name,
-            error_type: isLanguageError ? 'language_loading' : isWasmError ? 'wasm_access' : isQueryError ? 'query_syntax' : 'unknown',
+            error_type: isWorkerError ? 'worker_error' : isLanguageError ? 'language_loading' : isWasmError ? 'wasm_access' : isQueryError ? 'query_syntax' : 'unknown',
             troubleshooting: 'Check the suggestions above or refer to the AI_AGENT_GUIDE.md for detailed examples'
           },
           // Remove debug_info to prevent verbose error disclosure
@@ -798,9 +706,7 @@ function checkNodeVersion() {
 // Graceful shutdown
 async function shutdown() {
   console.error('Shutting down Tree-sitter MCP Server...');
-  if (config.useWorkers && workerPool) {
-    await workerPool.shutdown();
-  }
+  await workerPool.shutdown();
   process.exit(0);
 }
 
@@ -815,7 +721,7 @@ async function main() {
   
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Tree-sitter MCP Server running on stdio (${config.useWorkers ? 'worker' : 'direct'} mode)`);
+  console.error('Tree-sitter MCP Server (with workers) running on stdio');
 }
 
 main().catch((error) => {

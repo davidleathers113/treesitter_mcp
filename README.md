@@ -8,8 +8,11 @@ A Model Context Protocol (MCP) server that provides Tree-sitter code analysis ca
 - **Query code patterns** using Tree-sitter query syntax
 - **Navigate code structure** by getting nodes at specific positions
 - **Multiple language support** via WebAssembly grammar files
-- **Dynamic language loading** from local files or remote URLs
+- **Worker thread infrastructure** - CPU-intensive parsing off the main thread
+- **Bundled language grammars** - includes pre-packaged WASM files for popular languages
+- **Automatic fallback loading** - tries bundled → local → CDN sources
 - **No dependency conflicts** - uses web-tree-sitter (WebAssembly)
+- **Works offline** - no internet required with bundled grammars
 
 ## 🛠 Architecture
 
@@ -20,6 +23,19 @@ This implementation uses **web-tree-sitter** instead of native Node.js bindings 
 - ✅ **Cross-platform compatibility**
 - ✅ **Dynamic language loading** from URLs or local files
 - ✅ **Smaller dependency footprint**
+
+### Worker Thread Infrastructure
+
+The server includes a sophisticated worker thread infrastructure for optimal performance:
+
+- **CPU-intensive operations** moved off the main thread
+- **Worker pool management** with automatic scaling and load balancing
+- **Error recovery** with automatic worker restart on crashes
+- **Request queuing** for handling high load scenarios
+- **Configurable timeouts** and resource limits
+- **Real-time monitoring** via `get_worker_stats` tool
+
+The infrastructure supports both **worker mode** (default) and **direct mode** for compatibility.
 
 ## 📦 Installation & Setup
 
@@ -58,8 +74,8 @@ Parse source code and return AST information.
   "name": "parse_code",
   "arguments": {
     "code": "const x = 1; console.log(x);",
-    "language": "javascript",
-    "wasmPath": "https://github.com/jeff-hykin/common_tree_sitter_languages/raw/main/javascript.wasm"
+    "language": "javascript"
+    // No wasmPath needed - uses bundled grammar!
   }
 }
 ```
@@ -132,39 +148,109 @@ List all currently loaded languages.
 }
 ```
 
-## 🌐 Language Support
+### 7. `get_worker_stats` (Worker Mode Only)
 
-The server supports any language that has a Tree-sitter grammar compiled to WebAssembly. Popular languages include:
+Monitor worker pool performance and health:
 
-- **JavaScript**: `https://github.com/jeff-hykin/common_tree_sitter_languages/raw/main/javascript.wasm`
-- **TypeScript**: `https://github.com/jeff-hykin/common_tree_sitter_languages/raw/main/typescript.wasm`
-- **Python**: `https://github.com/jeff-hykin/common_tree_sitter_languages/raw/main/python.wasm`
-- **Rust**: `https://github.com/jeff-hykin/common_tree_sitter_languages/raw/main/rust.wasm`
-- **Go**: `https://github.com/jeff-hykin/common_tree_sitter_languages/raw/main/go.wasm`
-- **C++**: `https://github.com/jeff-hykin/common_tree_sitter_languages/raw/main/cpp.wasm`
+```json
+{
+  "name": "get_worker_stats",
+  "arguments": {}
+}
+```
 
-### Custom Grammar Files
+Returns real-time statistics about worker utilization, request counts, and pool health.
 
-You can use local .wasm files from npm packages:
+## ⚙️ Configuration
+
+The server can be configured via environment variables:
+
+### Worker Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TREESITTER_USE_WORKERS` | `true` | Enable worker thread mode |
+| `TREESITTER_WORKER_POOL_SIZE` | `min(4, cpus-1)` | Number of worker threads |
+| `TREESITTER_WORKER_TIMEOUT` | `30000` | Request timeout in milliseconds |
+| `TREESITTER_MAX_REQUESTS_PER_WORKER` | `1000` | Worker restart threshold |
+| `TREESITTER_RESTART_WORKERS` | `true` | Auto-restart workers on errors |
+
+### Cache Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TREESITTER_ENABLE_CACHE` | `true` | Enable parser caching |
+| `TREESITTER_PARSER_CACHE_SIZE` | `10` | Max parsers to cache |
+| `TREESITTER_WASM_CACHE_SIZE_MB` | `50` | WASM cache size (MB) |
+| `TREESITTER_TREE_CACHE_SIZE` | `100` | Max parsed trees to cache |
+
+### Language Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TREESITTER_PRELOAD_LANGUAGES` | `false` | Preload common languages |
+| `TREESITTER_LANGUAGES_TO_PRELOAD` | `js,ts,py,go,rust` | Languages to preload |
+
+### Debug Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TREESITTER_LOG_LEVEL` | `error` | Logging level (error/warn/info/debug) |
+| `TREESITTER_LOG_WORKER_STATS` | `false` | Log worker statistics |
+
+### Usage Examples
 
 ```bash
-npm install tree-sitter-javascript
-# Then use: "./node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm"
+# Use direct mode (single-threaded)
+TREESITTER_USE_WORKERS=false npm start
+
+# Use smaller worker pool
+TREESITTER_WORKER_POOL_SIZE=2 npm start
+
+# Enable debug logging
+TREESITTER_LOG_LEVEL=debug npm start
+
+# Preload common languages
+TREESITTER_PRELOAD_LANGUAGES=true npm start
 ```
+
+## 🌐 Language Support
+
+The server includes bundled WASM grammars for popular languages (via `tree-sitter-wasms` package):
+
+### Pre-bundled Languages (No wasmPath needed!)
+- JavaScript, TypeScript, Python
+- Go, Rust, C, C++, C#
+- Java, Ruby, PHP, Swift
+- HTML, CSS, SCSS, JSON, YAML
+- Bash, SQL, Markdown
+- And many more!
+
+### Loading Priority
+When you don't specify a `wasmPath`, the server automatically tries:
+1. **Bundled WASM files** (fastest, works offline)
+2. **Local node_modules** (if you've installed language packages)
+3. **CDN fallback** (jsDelivr, unpkg, GitHub)
+
+### Manual Loading (Optional)
+You can still specify custom WASM paths if needed:
+- **CDN URLs**: `https://unpkg.com/tree-sitter-javascript/tree-sitter-javascript.wasm`
+- **Local files**: `./node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm`
+- **Custom grammars**: `./grammars/my-language.wasm`
+
+### Using Custom Grammar Files
+
+While most languages work out-of-the-box, you can specify custom grammars:
 
 ```json
 {
-  "wasmPath": "./node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm"
+  "wasmPath": "./grammars/my-custom-language.wasm"
 }
 ```
 
-Or your own custom grammar files:
+### Offline Usage
 
-```json
-{
-  "wasmPath": "./grammars/my-language.wasm"
-}
-```
+The bundled grammars mean the server works completely offline - no internet connection required for parsing code in supported languages!
 
 ## 🔧 Smithery Deployment
 
@@ -230,7 +316,10 @@ const transport = new StreamableHTTPClientTransport(serverUrl)
 ### Common Issues
 
 **Q: "Could not load language" error**
-A: Ensure the .wasm file path is correct and accessible. Try using a direct URL from the `common_tree_sitter_languages` repository.
+A: This should be rare now with bundled grammars. If it happens:
+- Check if the language name is correct (e.g., "javascript" not "js")
+- For uncommon languages, provide a custom wasmPath
+- Check the error details for which sources were tried
 
 **Q: TypeScript compilation errors**
 A: Make sure all dependencies are installed with `npm install` and rebuild with `npm run build`.
@@ -238,11 +327,14 @@ A: Make sure all dependencies are installed with `npm install` and rebuild with 
 **Q: "EmscriptenModule not found" error**
 A: This is handled by the `src/types.d.ts` file which provides the missing type definitions.
 
+**Q: Server works locally but not when deployed**
+A: Ensure the `tree-sitter-wasms` dependency is included in your deployment.
+
 ### Performance Tips
 
-1. **Pre-load languages** using `load_language` for frequently used grammars
-2. **Use CDN URLs** for reliable access to grammar files
-3. **Cache .wasm files locally** for offline usage
+1. **Bundled grammars are fastest** - no network requests needed
+2. **Pre-load languages** using `load_language` if you know what you'll parse
+3. **Languages stay loaded** - once loaded, parsers are cached for the session
 
 ## 🔍 Query Syntax Examples
 
@@ -295,11 +387,12 @@ treesitter_mcp/
 This implementation solves the major Tree-sitter packaging issues by:
 
 1. **Using WebAssembly**: Eliminates native compilation and version conflicts
-2. **Dynamic loading**: Languages are loaded on-demand from URLs or local files
-3. **Clean dependencies**: Only requires `web-tree-sitter` and the MCP SDK
-4. **Universal compatibility**: Works across different Node.js versions and platforms
-5. **Multiple loading options**: Supports npm packages, CDN URLs, and local files
-6. **Fully tested**: Successfully parses code and returns complete AST with 8 nodes
+2. **Bundled grammars**: Includes pre-packaged WASM files via `tree-sitter-wasms`
+3. **Smart fallback loading**: Automatically tries bundled → local → CDN sources
+4. **Clean dependencies**: Only requires `web-tree-sitter`, `tree-sitter-wasms`, and the MCP SDK
+5. **Universal compatibility**: Works across different Node.js versions and platforms
+6. **Offline support**: Works without internet thanks to bundled grammars
+7. **Fully tested**: Successfully parses JavaScript, Python, TypeScript and more
 
 ## 🤝 Contributing
 

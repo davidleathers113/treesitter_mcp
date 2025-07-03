@@ -32,7 +32,7 @@ const testRequests = [
         params: {}
     }),
 
-    // Test parse_code with a simple JavaScript example
+    // Test parse_code with a simple JavaScript example (without wasmPath to test bundled loading)
     JSON.stringify({
         jsonrpc: "2.0",
         id: 3,
@@ -41,12 +41,36 @@ const testRequests = [
             name: "parse_code",
             arguments: {
                 code: "const x = 1;",
-                language: "javascript",
-                // Use npm package (install with: npm install tree-sitter-javascript)
-                // wasmPath: "./node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm"
+                language: "javascript"
+                // Now using bundled WASM from tree-sitter-wasms package
+            }
+        }
+    }),
 
-                // Or use CDN (requires internet connection)
-                wasmPath: "https://unpkg.com/tree-sitter-javascript@0.23.1/tree-sitter-javascript.wasm"
+    // Test with Python
+    JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+            name: "parse_code",
+            arguments: {
+                code: "def hello():\n    print('Hello, World!')",
+                language: "python"
+            }
+        }
+    }),
+
+    // Test with TypeScript
+    JSON.stringify({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+            name: "parse_code",
+            arguments: {
+                code: "interface User { name: string; age: number; }",
+                language: "typescript"
             }
         }
     })

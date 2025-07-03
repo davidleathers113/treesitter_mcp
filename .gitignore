@@ -47,3 +47,4 @@ pids
 
 # Optional eslint cache
 .eslintcache
+.early.coverage
